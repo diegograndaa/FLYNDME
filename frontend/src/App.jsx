@@ -1,7 +1,10 @@
 import { useState } from "react";
 
 function App() {
-  const [origins, setOrigins] = useState(["MAD", "JFK"]); // Ejemplo inicial: Madrid y Nueva York
+  const [origins, setOrigins] = useState(["MAD", "JFK"]); // Aeropuertos de origen
+  const [departureDate, setDepartureDate] = useState(""); // Fecha de ida
+  const [returnDate, setReturnDate] = useState(""); // Fecha de vuelta
+  const [directFlight, setDirectFlight] = useState(false); // Filtro de vuelos directos
   const [flights, setFlights] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -14,7 +17,9 @@ function App() {
     try {
       const results = await Promise.all(
         origins.map(async (origin) => {
-          const response = await fetch(`http://localhost:5000/api/flights/${origin}`);
+          const response = await fetch(
+            `http://localhost:5000/api/flights/${origin}?departureDate=${departureDate}&returnDate=${returnDate}&nonStop=${directFlight}`
+          );
           return response.json();
         })
       );
@@ -67,6 +72,36 @@ function App() {
           </button>
         </div>
 
+        <div className="mt-5">
+          <label className="block text-lg">Fecha de ida:</label>
+          <input 
+            type="date" 
+            value={departureDate} 
+            onChange={(e) => setDepartureDate(e.target.value)} 
+            className="p-3 border border-gray-500 rounded bg-gray-700 text-white w-full"
+          />
+        </div>
+
+        <div className="mt-3">
+          <label className="block text-lg">Fecha de vuelta:</label>
+          <input 
+            type="date" 
+            value={returnDate} 
+            onChange={(e) => setReturnDate(e.target.value)} 
+            className="p-3 border border-gray-500 rounded bg-gray-700 text-white w-full"
+          />
+        </div>
+
+        <div className="mt-3 flex items-center gap-2">
+          <input 
+            type="checkbox" 
+            checked={directFlight} 
+            onChange={() => setDirectFlight(!directFlight)} 
+            className="w-5 h-5"
+          />
+          <label className="text-lg">Solo vuelos directos</label>
+        </div>
+
         <button 
           onClick={fetchFlights} 
           className="mt-5 w-full bg-blue-600 hover:bg-blue-700 p-3 rounded-lg text-lg transition-all"
@@ -87,6 +122,7 @@ function App() {
                 <li key={index} className="mt-2 p-3 border-b border-gray-600">
                   <span className="text-green-400 font-semibold">{flight.price.total}€</span> → 
                   <strong className="ml-2">{flight.origin}</strong> a <strong>{flight.destination}</strong>
+                  <span className="ml-2 text-gray-400">({flight.departureDate} - {flight.returnDate})</span>
                 </li>
               ))}
             </ul>
