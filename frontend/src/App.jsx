@@ -1,46 +1,54 @@
 import { useState } from "react";
 
 function App() {
-  const [origins, setOrigins] = useState(["MAD", "JFK"]); // Aeropuertos de origen
+  const [origins, setOrigins] = useState(["MAD", "LON", "FRA","BCN"]); // Aeropuertos de origen
   const [departureDate, setDepartureDate] = useState(""); // Fecha de ida
   const [returnDate, setReturnDate] = useState(""); // Fecha de vuelta
   const [directFlight, setDirectFlight] = useState(false); // Filtro de vuelos directos
-  const [flights, setFlights] = useState([]);
+  const [flights, setFlights] = useState({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
   const fetchFlights = async () => {
     setLoading(true);
     setError(null);
-    setFlights([]);
+    setFlights({});
 
     try {
-      const results = await Promise.all(
-        origins.map(async (origin) => {
-          const response = await fetch(
-            `http://localhost:5000/api/flights/${origin}?departureDate=${departureDate}&returnDate=${returnDate}&nonStop=${directFlight}`
-          );
-          return response.json();
-        })
+      const response = await fetch(
+        `http://localhost:5000/api/flights?origins=${origins.join(",")}&departureDate=${departureDate}&returnDate=${returnDate}&nonStop=${directFlight}`
       );
+      const data = await response.json();
 
-      let destinations = {};
-      results.forEach((data, index) => {
-        if (data.data) {
-          data.data.forEach((flight) => {
-            if (!destinations[flight.destination] || parseFloat(flight.price.total) < parseFloat(destinations[flight.destination].price.total)) {
-              destinations[flight.destination] = { ...flight, origin: origins[index] };
-            }
-          });
+      if (!data.flights || data.flights.length === 0) {
+        setFlights({});
+        return;
+      }
+
+      // Agrupar vuelos por destino
+      let groupedFlights = {};
+      data.flights.forEach((flight) => {
+        const { destination, origin } = flight;
+        if (!groupedFlights[destination]) {
+          groupedFlights[destination] = [];
         }
+        groupedFlights[destination].push(flight);
       });
 
-      setFlights(Object.values(destinations));
+      setFlights(groupedFlights);
     } catch (err) {
       setError("Error conectando con el backend");
     }
 
     setLoading(false);
+  };
+
+  const addOrigin = () => setOrigins([...origins, ""]); // Añadir un nuevo campo vacío
+
+  const removeOrigin = (index) => {
+    if (origins.length > 1) {
+      setOrigins(origins.filter((_, i) => i !== index));
+    }
   };
 
   return (
@@ -51,21 +59,28 @@ function App() {
         <h2 className="text-xl font-semibold mb-3">Aeropuertos de origen</h2>
         <div className="flex flex-wrap gap-2">
           {origins.map((origin, index) => (
-            <input
-              key={index}
-              type="text"
-              value={origin}
-              onChange={(e) => {
-                const newOrigins = [...origins];
-                newOrigins[index] = e.target.value.toUpperCase();
-                setOrigins(newOrigins);
-              }}
-              className="p-3 border border-gray-500 rounded bg-gray-700 text-white w-40"
-              placeholder="Código IATA"
-            />
+            <div key={index} className="flex gap-2 items-center">
+              <input
+                type="text"
+                value={origin}
+                onChange={(e) => {
+                  const newOrigins = [...origins];
+                  newOrigins[index] = e.target.value.toUpperCase();
+                  setOrigins(newOrigins);
+                }}
+                className="p-3 border border-gray-500 rounded bg-gray-700 text-white w-24"
+                placeholder="IATA"
+              />
+              <button 
+                onClick={() => removeOrigin(index)} 
+                className="p-2 bg-red-500 text-white rounded-lg"
+              >
+                ✖
+              </button>
+            </div>
           ))}
           <button 
-            onClick={() => setOrigins([...origins, ""])} 
+            onClick={addOrigin} 
             className="p-3 bg-blue-500 text-white rounded-lg"
           >
             + Añadir Origen
@@ -104,7 +119,7 @@ function App() {
 
         <button 
           onClick={fetchFlights} 
-          className="mt-5 w-full bg-blue-600 hover:bg-blue-700 p-3 rounded-lg text-lg transition-all"
+          className="mt-5 w-full bg-green-600 hover:bg-green-700 p-3 rounded-lg text-lg transition-all"
         >
           🔍 Buscar Destino Más Barato
         </button>
@@ -114,18 +129,22 @@ function App() {
       {error && <p className="mt-5 text-red-500">❌ {error}</p>}
 
       <div className="mt-5 w-full max-w-3xl">
-        {flights.length > 0 ? (
+        {Object.keys(flights).length > 0 ? (
           <div className="bg-gray-800 p-5 rounded-lg shadow-lg">
             <h2 className="text-2xl font-semibold mb-3">✈️ Destinos Más Baratos</h2>
-            <ul className="list-none">
-              {flights.map((flight, index) => (
-                <li key={index} className="mt-2 p-3 border-b border-gray-600">
-                  <span className="text-green-400 font-semibold">{flight.price.total}€</span> → 
-                  <strong className="ml-2">{flight.origin}</strong> a <strong>{flight.destination}</strong>
-                  <span className="ml-2 text-gray-400">({flight.departureDate} - {flight.returnDate})</span>
-                </li>
-              ))}
-            </ul>
+            {Object.entries(flights).map(([destination, flightList]) => (
+              <div key={destination} className="mt-4 p-3 border-b border-gray-600">
+                <h3 className="text-lg font-bold">🌍 {destination}</h3>
+                <ul>
+                  {flightList.map((flight, index) => (
+                    <li key={index} className="mt-2">
+                      Desde <strong>{flight.origin}</strong>: 
+                      <span className="text-green-400 font-semibold"> {flight.price} {flight.currency}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
           </div>
         ) : (
           !loading && !error && <p className="text-gray-400">No hay vuelos disponibles</p>
