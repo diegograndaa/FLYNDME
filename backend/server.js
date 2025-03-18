@@ -32,76 +32,88 @@ async function getAccessToken() {
     }
 }
 
-// Función para realizar solicitudes con reintento y espera en caso de error 429
-async function fetchFlightsWithRetry(origin, departureDate, duration, nonStop, token, retries = 3, delay = 1000) {
-    for (let attempt = 1; attempt <= retries; attempt++) {
-        try {
-            console.log(`📡 Intento ${attempt}: Buscando vuelos desde ${origin}...`);
+async function fetchFlights(origin, destination, departureDate, token) {
+    try {
+        console.log(`📡 Buscando vuelos desde ${origin} a ${destination} en ${departureDate}...`);
+        const response = await axios.get("https://test.api.amadeus.com/v1/shopping/flight-offers", {
+            params: { 
+                originLocationCode: origin,
+                destinationLocationCode: destination,
+                departureDate: departureDate,
+                adults: 1,
+                max: 1
+            },
+            headers: { Authorization: `Bearer ${token}` }
+        });
 
-            const response = await axios.get("https://test.api.amadeus.com/v1/shopping/flight-destinations", {
-                params: { 
-                    origin,
-                    departureDate, 
-                    duration,
-                    nonStop: nonStop === "true" ? true : false
-                },
-                headers: { Authorization: `Bearer ${token}` }
-            });
-
-            if (response.data.errors) {
-                console.error(`⚠️ Error en la respuesta de Amadeus para ${origin}:`, response.data.errors);
-                return [];
-            }
-
-            return response.data.data.map(flight => ({
-                origin,
-                destination: flight.destination,
-                departureDate: flight.departureDate,
-                returnDate: flight.returnDate || null,
-                price: flight.price.total,
-                currency: response.data.meta.currency
-            }));
-
-        } catch (error) {
-            if (error.response?.status === 429 && attempt < retries) {
-                console.warn(`⚠️ Límite de solicitudes excedido para ${origin}. Reintentando en ${delay}ms...`);
-                await new Promise(resolve => setTimeout(resolve, delay)); // Espera antes de reintentar
-                delay *= 2; // Incremento exponencial del tiempo de espera
-            } else {
-                console.error(`❌ Error obteniendo vuelos desde ${origin}:`, error.response?.data || error.message);
-                return [];
-            }
+        if (!response.data.data || response.data.data.length === 0) {
+            return null;
         }
+
+        return {
+            origin,
+            destination,
+            price: parseFloat(response.data.data[0].price.total),
+            currency: response.data.data[0].price.currency
+        };
+    } catch (error) {
+        console.error(`❌ Error obteniendo vuelos desde ${origin} a ${destination}:`, error.response?.data || error.message);
+        return null;
     }
-    return [];
 }
 
-// Endpoint para obtener vuelos desde múltiples aeropuertos con reintentos
 app.get("/api/flights", async (req, res) => {
     let { origins, departureDate, returnDate, nonStop } = req.query;
     
     if (!origins) return res.status(400).json({ error: "Debes proporcionar al menos un aeropuerto de origen." });
 
-    const originList = origins.split(","); // Convertimos los aeropuertos en una lista
+    const originList = origins.split(",");
     const token = await getAccessToken();
 
     if (!token) return res.status(500).json({ error: "No se pudo obtener el token de Amadeus" });
 
-    const isValidDate = (date) => /^\d{4}-\d{2}-\d{2}$/.test(date);
-    if (!departureDate || !isValidDate(departureDate)) {
-        return res.status(400).json({ error: "La fecha de salida debe estar en formato YYYY-MM-DD", received: departureDate });
-    }
-
-    let duration = returnDate ? Math.max(1, (new Date(returnDate) - new Date(departureDate)) / (1000 * 60 * 60 * 24)) : 3;
-    
     let allFlights = [];
 
     for (let origin of originList) {
-        const flights = await fetchFlightsWithRetry(origin, departureDate, duration, nonStop, token);
-        allFlights = allFlights.concat(flights);
+        const outboundFlights = await fetchFlights(origin, "ANY", departureDate, token);
+        if (outboundFlights) allFlights.push(outboundFlights);
+        
+        if (returnDate) {
+            const returnFlights = await fetchFlights("ANY", origin, returnDate, token);
+            if (returnFlights) allFlights.push(returnFlights);
+        }
     }
 
-    res.json({ flights: allFlights });
+    let destinationMap = {};
+
+    for (let flight of allFlights) {
+        if (!flight) continue;
+        
+        if (!destinationMap[flight.destination]) {
+            destinationMap[flight.destination] = {
+                destination: flight.destination,
+                flights: [],
+                totalCostEUR: 0
+            };
+        }
+
+        destinationMap[flight.destination].flights.push(flight);
+    }
+
+    let validDestinations = Object.values(destinationMap).filter(dest => {
+        let uniqueOrigins = new Set(dest.flights.map(f => f.origin));
+        return uniqueOrigins.size === originList.length;
+    });
+
+    let sortedDestinations = validDestinations.map(dest => {
+        dest.totalCostEUR = dest.flights.reduce((sum, flight) => sum + flight.price, 0);
+        dest.averageCostPerTraveler = (dest.totalCostEUR / originList.length).toFixed(2);
+        return dest;
+    }).sort((a, b) => a.totalCostEUR - b.totalCostEUR);
+
+    res.json({
+        flights: sortedDestinations
+    });
 });
 
 const PORT = process.env.PORT || 5000;
